@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	"gitlab.eng.vmware.com/hnarahari/vaali"
+	"github.com/narahari92/vaali"
 )
 
 func Generator() vaali.RunnableFunc {
