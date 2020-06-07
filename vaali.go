@@ -2,11 +2,8 @@ package vaali
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -25,9 +22,11 @@ type Synchronizer struct {
 	wg            sync.WaitGroup
 	cancellations []context.CancelFunc
 	Runner        Runnable
+	MemLowerBound int64
+	MemUpperBound int64
 }
 
-func (s *Synchronizer) Start(stop <-chan struct{}) error {
+func (s *Synchronizer) Start(stop <-chan struct{}) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -35,36 +34,22 @@ func (s *Synchronizer) Start(stop <-chan struct{}) error {
 		select {
 		case <-stop:
 			s.wg.Wait()
-			s.cancelGoroutines()
+			for _, cancel := range s.cancellations {
+				cancel()
+			}
 
-			return nil
+			return
 		case <-ticker.C:
 			log.Printf("Number of active goroutines: %d\n", runtime.NumGoroutine())
-			err := s.adjust(stop)
-			if err != nil {
-				s.cancelGoroutines()
-				return err
-			}
+			s.adjust(stop)
 		}
 	}
 }
 
-func (s *Synchronizer) adjust(stop <-chan struct{}) error {
-	if len(os.Args) < 3 {
-		return fmt.Errorf("program expects 2 integer arguments for lower bound memory and upper bound memory")
-	}
-
-	memLowerBound, err := strconv.ParseInt(os.Args[1], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to convert lower bound memory argument %s into int64, err: %v", os.Args[0], err)
-	}
-	memUpperBound, err := strconv.ParseInt(os.Args[2], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to convert upper bound memory argument %s into int64, err: %v", os.Args[1], err)
-	}
-
+func (s *Synchronizer) adjust(stop <-chan struct{}) {
 	log.Printf("Memory usage: %d\n", memUsage())
-	for memUsage() < uint64(memLowerBound) {
+
+	for memUsage() < uint64(s.MemLowerBound) {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancellations = append(s.cancellations, cancel)
 
@@ -78,9 +63,9 @@ func (s *Synchronizer) adjust(stop <-chan struct{}) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	for memUsage() > uint64(memUpperBound) {
+	for memUsage() > uint64(s.MemUpperBound) {
 		if len(s.cancellations) == 0 {
-			return nil
+			return
 		}
 		cancel := s.cancellations[len(s.cancellations)-1]
 		s.cancellations = s.cancellations[:len(s.cancellations)-1]
@@ -89,14 +74,9 @@ func (s *Synchronizer) adjust(stop <-chan struct{}) error {
 
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	return nil
 }
 
 func (s *Synchronizer) cancelGoroutines() {
-	for _, cancel := range s.cancellations {
-		cancel()
-	}
 }
 
 func memUsage() uint64 {
